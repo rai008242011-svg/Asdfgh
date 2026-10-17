@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="JARVIS">
+<link rel="manifest" href="/manifest.json">
+<title>JARVIS</title>
+<style>
+  :root { --bg:#000000; --ink:#e6f6ff; --dim:#6f94b0; --line:rgba(150,210,255,.25); --gold:#d6efff; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); overflow:hidden;
+    font-family:"SF Mono","Roboto Mono",ui-monospace,Menlo,monospace; user-select:none; }
+  body { background:#000; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  /* ---- 上のバー ---- */
+  #top { position:fixed; left:0; right:0; top:calc(env(safe-area-inset-top) + 12px); padding:0 14px;
+    display:flex; justify-content:space-between; gap:12px; pointer-events:none; letter-spacing:.14em; font-size:10px; color:var(--dim); }
+  #top > div { border-top:1px solid var(--line); padding-top:6px; min-width:40%; }
+  #top .r { text-align:right; }
+  #clock { font-size:22px; color:var(--ink); letter-spacing:.1em; }
+
+  /* ---- パネル ---- */
+  #panels { position:fixed; left:14px; right:14px; bottom:calc(env(safe-area-inset-bottom) + 152px);
+    display:grid; grid-template-columns:1fr 1fr; gap:8px; pointer-events:none; }
+  .col { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .card { position:relative; border:1px solid var(--line); background:rgba(8,16,26,.6); padding:7px 9px; min-width:0; }
+  .card::before, .card::after { content:""; position:absolute; width:8px; height:8px; border:1.5px solid rgba(170,220,255,.8); }
+  .card::before { top:-1px; left:-1px; border-right:0; border-bottom:0; }
+  .card::after { right:-1px; bottom:-1px; border-left:0; border-top:0; }
+  .t { font-size:9px; letter-spacing:.22em; color:var(--dim); margin-bottom:5px; }
+  .row { display:flex; justify-content:space-between; font-size:10px; line-height:1.7; letter-spacing:.06em; }
+  .row b { color:var(--ink); font-weight:600; }
+  .bars { display:flex; align-items:flex-end; gap:2px; height:30px; }
+  .bars i { flex:1; background:rgba(170,220,255,.75); min-height:2px; transition:height .12s; }
+  .bars.gold i { background:rgba(235,248,255,.85); }
+  .big { font-size:20px; color:var(--gold); letter-spacing:.06em; }
+  .big small { font-size:10px; color:var(--dim); margin-left:3px; }
+  .mods { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+  .mod { border:1px dashed var(--line); color:var(--dim); text-align:center; font-size:8px; padding:5px 0; letter-spacing:.12em; line-height:1.5; }
+  .mod span { display:block; font-size:7px; opacity:.8; }
+  .log { font-size:10px; line-height:1.6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; color:var(--ink); }
+  .log.q { color:var(--dim); }
+  .wide-only { display:none; }
+  /* パネルは、普段は隠しておく（右上のボタンで表示） */
+  #panels { display:none; }
+  body.dash #panels { display:grid; }
+  #dashbtn { pointer-events:auto; margin-top:6px; background:none; border:1px solid var(--line); color:var(--dim);
+    font:inherit; font-size:9px; letter-spacing:.2em; padding:3px 8px; cursor:pointer; }
+
+  /* ---- 下の表示 ---- */
+  #bottom { position:fixed; left:0; right:0; bottom:calc(env(safe-area-inset-bottom) + 14px); padding:0 18px;
+    display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
+  #state { font-size:13px; letter-spacing:.3em; color:var(--ink); }
+  #caption { max-width:560px; min-height:5.2em; text-align:center; line-height:1.7; font-size:13px; letter-spacing:.04em;
+    font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
+  #heard { color:var(--dim); }
+
+  /* ---- 起動画面 ---- */
+  #start { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px; background:rgba(0,0,0,.92); z-index:5; cursor:pointer; letter-spacing:.3em; font-size:14px; }
+  #start small { letter-spacing:.06em; color:var(--dim); font-size:11px; max-width:280px; text-align:center; line-height:1.7;
+    font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
+
+  /* ---- 横長の画面（タブレット・PC）：左右に大きく並べる ---- */
+  @media (min-aspect-ratio: 1/1) {
+    #panels { top:calc(env(safe-area-inset-top) + 78px); bottom:calc(env(safe-area-inset-bottom) + 130px);
+      grid-template-columns:minmax(0,260px) 1fr minmax(0,260px); gap:0; }
+    #panels::after { content:""; grid-column:2; grid-row:1; }
+    #colL { grid-column:1; grid-row:1; }
+    #colR { grid-column:3; grid-row:1; }
+    .wide-only { display:block; }
+    .bars { height:44px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="hud"></canvas>
+
+<div id="top">
+  <div class="l"><div id="clock">--:--:--</div><div id="date"></div></div>
+  <div class="r"><div id="net">LINK: OFFLINE</div><div id="wakeinfo"></div><button id="dashbtn">PANELS</button></div>
+</div>
+
+<div id="panels">
+  <div class="col" id="colL">
+    <div class="card">
+      <div class="t">SYSTEM</div>
+      <div class="row"><span>MIC</span><b id="s-mic">OFF</b></div>
+      <div class="row"><span>VOICE-IN</span><b id="s-in">-</b></div>
+      <div class="row"><span>WAKE</span><b id="s-wake">-</b></div>
+    </div>
+    <div class="card">
+      <div class="t">AUDIO INPUT</div>
+      <div class="bars" id="b-audio"></div>
+    </div>
+    <div class="card wide-only">
+      <div class="t">CONVERSATION LOG</div>
+      <div id="logs"></div>
+    </div>
+  </div>
+  <div class="col" id="colR">
+    <div class="card">
+      <div class="t">RESPONSE TIME</div>
+      <div class="big"><span id="lat">---</span><small>ms</small></div>
+      <div class="bars gold" id="b-lat" style="height:22px;margin-top:4px"></div>
+    </div>
+    <div class="card wide-only">
+      <div class="t">SESSION</div>
+      <div class="row"><span>TURNS</span><b id="turns">0</b></div>
+      <div class="row"><span>UPTIME</span><b id="uptime">00:00</b></div>
+    </div>
+    <div class="card">
+      <div class="t">MODULES</div>
+      <div class="mods">
+        <div class="mod">SCHEDULE<span>未接続</span></div>
+        <div class="mod">TASKS<span>未接続</span></div>
+        <div class="mod">WEATHER<span>未接続</span></div>
+        <div class="mod">MEMORY<span>未接続</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="bottom">
+  <div id="state">OFFLINE</div>
+  <div id="caption"><div id="heard"></div><div id="reply"></div></div>
+</div>
+
+<div id="start">
+  <div>TAP TO START</div>
+  <small>タップすると、マイクを使った常時の聞き取りを始めます。画面は点けたままにしてください。</small>
+</div>
+
+<script>
+(() => {
+  // ================= 設定（ここを書き換えて好きな呼び名にできます） =================
+  const WAKE_WORDS = ["ジャービス", "ジャーヴィス", "ジャービズ", "JARVIS", "Jarvis", "秘書", "ひしょ", "ヒショ"];   // この言葉で呼びかけると反応します
+  const FOLLOWUP_MS = 8000;                          // 返事のあと、呼びかけなしで続けて話せる時間
+  // ====================================================================================
+
+  const $ = (id) => document.getElementById(id);
+  const cv = $("hud"), g = cv.getContext("2d");
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  // mode: off | standby | active | thinking | speaking | recording
+  let mode = "off";
+  let level = 0, smooth = 0, spike = 0;
+  let history = [], logs = [], turns = 0, bootAt = 0;
+  let audioHist = new Array(24).fill(0), latHist = [];
+  let stream = null, analyser = null, tbuf = null, audioCtx = null;
+  let rec = null, wantListening = false, activeTimer = null, wakeLock = null;
+
+  const COLORS = {
+    off:[70,110,105], standby:[70,200,180], active:[120,255,230], recording:[120,255,230],
+    thinking:[255,190,90], speaking:[190,255,245]
+  };
+  const LABEL = { off:"OFFLINE", standby:"STANDBY", active:"LISTENING", recording:"LISTENING", thinking:"PROCESSING", speaking:"RESPONDING" };
+  const setMode = (m) => {
+    mode = m;
+    $("state").textContent = LABEL[m];
+    $("net").textContent = "LINK: " + (m === "off" ? "OFFLINE" : "ONLINE");
+  };
+
+  // ---------------- パネルの表示 ----------------
+  const p2 = (n) => String(n).padStart(2, "0");
+  function setBars(el, arr, max) {
+    while (el.children.length < arr.length) el.appendChild(document.createElement("i"));
+    while (el.children.length > arr.length) el.removeChild(el.lastChild);
+    arr.forEach((v, i) => { el.children[i].style.height = Math.max(6, Math.min(100, (v / max) * 100)) + "%"; });
+  }
+  function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c])); }
+  function renderLogs() {
+    $("logs").innerHTML = logs.length
+      ? logs.map((l) => `<div class="log q">› ${esc(l.q)}</div><div class="log">${esc(l.a)}</div>`).join("")
+      : `<div class="log q">NO DATA</div>`;
+  }
+  function tickPanels() {
+    const d = new Date();
+    $("clock").textContent = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    $("date").textContent = `${d.getFullYear()}.${p2(d.getMonth()+1)}.${p2(d.getDate())}`;
+    audioHist.push(Math.min(1, level * 3)); audioHist.shift();
+    setBars($("b-audio"), audioHist, 1);
+    $("s-mic").textContent = stream ? "ON" : "OFF";
+    $("s-in").textContent = SR ? "BROWSER" : "MANUAL";
+    $("s-wake").textContent = SR ? WAKE_WORDS[0] : "TAP";
+    $("turns").textContent = turns;
+    if (bootAt) { const s = Math.floor((Date.now() - bootAt) / 1000); $("uptime").textContent = `${p2(Math.floor(s / 60))}:${p2(s % 60)}`; }
+  }
+  setInterval(tickPanels, 150); tickPanels(); renderLogs();
+  $("wakeinfo").textContent = SR ? `WAKE: ${WAKE_WORDS[0]}` : "MANUAL MODE";
+
+  // ---------------- 音（合図・読み上げ） ----------------
+  function beep(freq = 880, ms = 90) {
+    try {
+      if (!audioCtx) return;
+      const o = audioCtx.createOscillator(), a = audioCtx.createGain();
+      o.frequency.value = freq; o.type = "sine"; a.gain.value = 0.05;
+      o.connect(a); a.connect(audioCtx.destination);
+      o.start(); o.stop(audioCtx.currentTime + ms / 1000);
+    } catch (_) {}
+  }
+  function speak(text) {
+    return new Promise((resolve) => {
+      if (!text || !("speechSynthesis" in window)) return resolve();
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "ja-JP";
+      const ja = speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith("ja"));
+      if (ja) u.voice = ja;
+      u.rate = 1.05; u.onend = resolve; u.onerror = resolve;
+      u.onboundary = () => { spike = 1; };   // 読み上げの区切りで、横線が大きく動く
+      speechSynthesis.speak(u);
+    });
+  }
+  function unlockSpeech() {
+    try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; speechSynthesis.speak(u); } catch (_) {}
+  }
+
+  // ---------------- サーバーへ送る ----------------
+  async function ask(payload, isAudio) {
+    const headers = {};
+    const pass = localStorage.getItem("secretary_pass");
+    if (pass) headers["x-passcode"] = pass;
+    let body;
+    if (isAudio) {
+      headers["Content-Type"] = "application/octet-stream";
+      headers["x-mime"] = payload.type;
+      headers["x-history"] = encodeURIComponent(JSON.stringify(history.slice(-6)));
+      body = payload;
+    } else {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify({ text: payload, history: history.slice(-6) });
+    }
+    const res = await fetch("/api/voice", { method: "POST", headers, body });
+    if (res.status === 401) {
+      const p = prompt("合言葉を入力してください");
+      if (p) localStorage.setItem("secretary_pass", p);
+      throw new Error("合言葉を確認しました。もう一度話しかけてください");
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error([data.error || "エラー", data.status ? `(${data.status})` : "", data.detail || ""].filter(Boolean).join(" "));
+    return data;
+  }
+
+  async function handle(payload, isAudio) {
+    clearTimeout(activeTimer);
+    stopRecognition();
+    setMode("thinking");
+    const t0 = performance.now();
+    try {
+      const data = await ask(payload, isAudio);
+      const ms = Math.round(performance.now() - t0);
+      $("lat").textContent = ms;
+      latHist.push(ms); if (latHist.length > 12) latHist.shift();
+      setBars($("b-lat"), latHist, Math.max(...latHist, 1000));
+      if (!data.heard) { $("heard").textContent = ""; return resumeStandby(); }
+      $("heard").textContent = "› " + data.heard + (data.searchError ? "（検索エラー: " + data.searchError + "）" : "");
+      $("reply").textContent = data.reply;
+      history.push({ role: "user", content: data.heard }, { role: "assistant", content: data.reply });
+      logs.push({ q: data.heard, a: data.reply }); if (logs.length > 3) logs.shift();
+      turns++; renderLogs();
+      setMode("speaking");
+      await speak(data.reply);
+      enterActive(FOLLOWUP_MS);   // 返事のあと少しの間は、呼びかけなしで続けて話せる
+    } catch (e) {
+      $("reply").textContent = "エラー: " + e.message;
+      resumeStandby();
+    }
+  }
+
+  // ---------------- 常時聞き取り（呼びかけで起動） ----------------
+  function findWake(text) {
+    let best = -1, len = 0;
+    for (const w of WAKE_WORDS) {
+      const i = text.indexOf(w);
+      if (i !== -1 && (best === -1 || i < best)) { best = i; len = w.length; }
+    }
+    return best === -1 ? null : text.slice(best + len).replace(/^[\s、。,．.！!？?]+/, "");
+  }
+  function startRecognition() {
+    if (!SR || !wantListening || rec) return;
+    rec = new SR();
+    rec.lang = "ja-JP"; rec.continuous = true; rec.interimResults = true;
+    rec.onresult = (ev) => {
+      let finalText = "", interim = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
+      }
+      if (interim && mode === "active") $("heard").textContent = "› " + interim;
+      if (!finalText) return;
+      finalText = finalText.trim();
+      if (mode === "standby") {
+        const rest = findWake(finalText);
+        if (rest === null) return;                       // 呼びかけがなければ、何もしない
+        if (rest.length >= 2) return handle(rest, false);
+        beep(988); enterActive(FOLLOWUP_MS);             // 呼びかけだけ → 続きを待つ
+      } else if (mode === "active") {
+        const rest = findWake(finalText);
+        handle(rest !== null && rest.length >= 2 ? rest : finalText, false);
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        wantListening = false; setMode("off");
+        $("reply").textContent = "マイクが許可されていません。ブラウザの設定で許可してください";
+      }
+    };
+    rec.onend = () => {
+      rec = null;
+      if (wantListening && (mode === "standby" || mode === "active")) setTimeout(startRecognition, 250);
+    };
+    try { rec.start(); } catch (_) { rec = null; }
+  }
+  function stopRecognition() {
+    if (rec) { const r = rec; rec = null; r.onend = null; try { r.abort(); } catch (_) {} }
+  }
+  function enterActive(ms) {
+    setMode("active");
+    clearTimeout(activeTimer);
+    activeTimer = setTimeout(resumeStandby, ms);
+    startRecognition();
+  }
+  function resumeStandby() {
+    clearTimeout(activeTimer);
+    setMode(wantListening ? "standby" : "off");
+    startRecognition();
+  }
+
+  // ---------------- 予備：タップして話す方式（常時聞き取りが使えない端末向け） ----------------
+  let recorder = null, chunks = [];
+  function manualRecord() {
+    if (!stream || mode === "recording" || mode === "thinking") return;
+    const list = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+    const mime = list.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    chunks = [];
+    recorder.ondataavailable = (e) => e.data && e.data.size && chunks.push(e.data);
+    recorder.onstop = () => {
+      const type = (recorder.mimeType || "audio/webm").split(";")[0];
+      const blob = new Blob(chunks, { type });
+      if (blob.size < 1500) return setMode("standby");
+      handle(blob, true);
+    };
+    recorder.start(); setMode("recording"); beep(988);
+    const t0 = performance.now(); let heard = false, last = t0;
+    const iv = setInterval(() => {
+      const now = performance.now();
+      if (level > 0.06) { heard = true; last = now; }
+      const done = (heard && now - last > 1400) || now - t0 > 20000 || (!heard && now - t0 > 7000);
+      if (done || mode !== "recording") { clearInterval(iv); if (recorder.state !== "inactive") recorder.stop(); }
+    }, 100);
+  }
+
+  // ---------------- 起動 ----------------
+  async function boot() {
+    $("start").style.display = "none";
+    unlockSpeech();
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize = 512;
+      src.connect(analyser); tbuf = new Uint8Array(analyser.fftSize);
+    } catch (e) {
+      $("reply").textContent = "マイクが使えません。ブラウザの設定でマイクを許可してください";
+      return setMode("off");
+    }
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState === "visible") {
+        try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (_) {}
+        if (wantListening && mode === "standby") startRecognition();
+      }
+    });
+    wantListening = true; bootAt = Date.now();
+    beep(660, 70); setTimeout(() => beep(990, 90), 90);
+    setMode("standby");
+    if (SR) startRecognition();
+    else $("reply").textContent = "この端末は常時聞き取りに未対応です。画面をタップして話してください";
+  }
+  $("start").addEventListener("click", boot);
+  $("dashbtn").addEventListener("click", (e) => { e.stopPropagation(); document.body.classList.toggle("dash"); });
+  cv.addEventListener("click", () => {
+    if (mode === "speaking") { speechSynthesis.cancel(); return; }
+    if (!SR) manualRecord();                                              // 常時聞き取り非対応 → タップで録音
+    else if (mode === "standby") { beep(988); enterActive(FOLLOWUP_MS); }  // 呼びかけの代わりにタップでもOK
+  });
+
+  // ---------------- 中央のコア描画（オリジナルのHUD） ----------------
+  function resize() {
+    const d = window.devicePixelRatio || 1;
+    cv.width = innerWidth * d; cv.height = innerHeight * d;
+  }
+  addEventListener("resize", resize); resize();
+
+  function readLevel() {
+    if (!analyser) { level = 0; return; }
+    analyser.getByteTimeDomainData(tbuf);
+    let peak = 0;
+    for (let i = 0; i < tbuf.length; i++) peak = Math.max(peak, Math.abs(tbuf[i] - 128) / 128);
+    level = peak;
+  }
+
+  // 考え中 = もやもや（ゆらぐ光のかたまり） / 話している間 = 横線が動く
+  let hazeA = 0, linesA = 0.2;
+  function draw(t) {
+    readLevel();
+    smooth += (level - smooth) * 0.25;
+    spike *= 0.92;
+    const W = cv.width, H = cv.height, d = window.devicePixelRatio || 1;
+    const wide = W >= H;
+    const cx = W / 2, cy = wide ? H * 0.46 : H * 0.38;
+    const R = wide ? Math.min(H * 0.32, W * 0.2) : Math.min(W * 0.42, H * 0.2);
+    const half = wide ? Math.min(W * 0.28, 520 * d) : W * 0.42;
+
+    // 状態ごとの目標（なめらかに切り替える）
+    const hazeT = mode === "thinking" ? 1 : 0;
+    const linesT = (mode === "speaking" || mode === "active" || mode === "recording") ? 1
+                 : mode === "standby" ? 0.45 : mode === "thinking" ? 0 : 0.15;
+    hazeA += (hazeT - hazeA) * 0.05;
+    linesA += (linesT - linesA) * 0.07;
+
+    let energy;
+    if (mode === "speaking") energy = 0.3 + 0.35 * spike + 0.25 * (0.5 + 0.5 * Math.sin(t * 0.011) * Math.sin(t * 0.017 + 1));
+    else if (mode === "active" || mode === "recording") energy = Math.min(1, smooth * 3.2);
+    else energy = 0.04 + 0.03 * Math.sin(t * 0.002);   // 待機中は、ほぼ静かな一本線
+
+    g.clearRect(0, 0, W, H);
+    g.lineCap = "round"; g.lineJoin = "round";
+
+    // もやもや
+    if (hazeA > 0.01) {
+      g.globalCompositeOperation = "lighter";
+      const cols = [[255,255,255],[170,225,255],[110,190,255],[205,236,255],[140,170,255],[225,246,255]];
+      for (let i = 0; i < cols.length; i++) {
+        const ph = i * 1.7;
+        const bx = cx + Math.sin(t * 0.00031 * (1 + i * 0.17) + ph) * R * 0.55;
+        const by = cy + Math.cos(t * 0.00027 * (1 + i * 0.13) + ph * 1.3) * R * 0.4;
+        const br = R * (0.55 + 0.18 * Math.sin(t * 0.0009 + ph));
+        const gr = g.createRadialGradient(bx, by, 0, bx, by, br);
+        const col = cols[i];
+        gr.addColorStop(0, `rgba(${col},${0.30 * hazeA})`);
+        gr.addColorStop(0.55, `rgba(${col},${0.10 * hazeA})`);
+        gr.addColorStop(1, `rgba(${col},0)`);
+        g.fillStyle = gr; g.beginPath(); g.arc(bx, by, br, 0, 7); g.fill();
+      }
+      g.globalCompositeOperation = "source-over";
+    }
+
+    // 動く横線
+    if (linesA > 0.02) {
+      const c = mode === "speaking" ? [235, 248, 255] : [160, 215, 255];
+      const x0 = cx - half, x1 = cx + half, n = 140, gap = Math.min(H * 0.035, 26 * d);
+      const grad = g.createLinearGradient(x0, 0, x1, 0);
+      grad.addColorStop(0, `rgba(${c},0)`);
+      grad.addColorStop(0.15, `rgba(${c},0.9)`);
+      grad.addColorStop(0.85, `rgba(${c},0.9)`);
+      grad.addColorStop(1, `rgba(${c},0)`);
+      g.strokeStyle = grad;
+      for (let j = -3; j <= 3; j++) {
+        const fall = 1 - Math.abs(j) / 4.2;
+        g.globalAlpha = linesA * (0.25 + 0.75 * fall);
+        g.lineWidth = (j === 0 ? 2.2 : 1.4) * d;
+        g.beginPath();
+        for (let k = 0; k <= n; k++) {
+          const u = k / n, env = Math.pow(Math.sin(Math.PI * u), 1.4);
+          const w = Math.sin(u * 12 + t * 0.006 + j * 0.8) * 0.6 + Math.sin(u * 29 - t * 0.0095 + j * 1.9) * 0.4;
+          const y = cy + j * gap + w * env * energy * H * 0.075 * fall;
+          const x = x0 + (x1 - x0) * u;
+          if (k) g.lineTo(x, y); else g.moveTo(x, y);
+        }
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  if ("speechSynthesis" in window) speechSynthesis.getVoices();
+})();
+</script>
+</body>
+</html>
