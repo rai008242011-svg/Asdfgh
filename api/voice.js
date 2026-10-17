@@ -52,6 +52,37 @@ async function geminiSearch({ key, model, system, history, text }) {
   return clean(out);
 }
 
+// Groqのチャットモデル。アカウントによって使えるものが違うので、使えるものが見つかるまで順に試す
+const MODEL_CANDIDATES = ["openai/gpt-oss-20b", "llama-3.1-8b-instant", "openai/gpt-oss-120b", "llama-3.3-70b-versatile"];
+let okModel = "";
+
+async function groqChat(key, messages) {
+  const first = (process.env.GROQ_CHAT_MODEL || "").trim();
+  const list = [...new Set([first, okModel, ...MODEL_CANDIDATES].filter(Boolean))];
+  let last = { error: true, status: 0, detail: "使えるモデルが見つかりません" };
+  for (const model of list) {
+    const body = { model, messages, temperature: 0.6, max_tokens: 800 };
+    if (model.startsWith("openai/gpt-oss")) body.reasoning_effort = "low";
+    const r = await fetch(`${GROQ}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const text = clean((((j.choices || [])[0] || {}).message || {}).content || "");
+      if (text) { okModel = model; return { reply: text }; }
+      last = { error: true, status: 200, detail: `${model} の返答が空でした` };
+      continue;
+    }
+    const detail = await errMsg(r);
+    last = { error: true, status: r.status, detail: `${model}: ${detail}` };
+    const modelProblem = r.status === 404 || ((r.status === 400 || r.status === 403) && /model/i.test(detail));
+    if (!modelProblem) break;   // モデル以外の問題（キー違い・利用制限など）は、そのまま返す
+  }
+  return last;
+}
+
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "POST only" });
@@ -168,23 +199,11 @@ module.exports = async (req, res) => {
         { role: "user", content: heard },
       ];
 
-      const chatRes = await fetch(`${GROQ}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: process.env.GROQ_CHAT_MODEL || "llama-3.3-70b-versatile",
-          messages,
-          temperature: 0.6,
-          max_tokens: 300,
-        }),
-      });
-      if (!chatRes.ok) {
-        return res.status(502).json({ error: "返答の生成に失敗しました", status: chatRes.status, detail: await errMsg(chatRes) });
+      const out = await groqChat(key, messages);
+      if (out.error) {
+        return res.status(502).json({ error: "返答の生成に失敗しました", status: out.status, detail: out.detail });
       }
-      reply = clean((((await chatRes.json()).choices || [])[0] || {}).message?.content || "");
+      reply = out.reply;
     }
 
     return res.status(200).json({ heard, reply, searched, searchError });
